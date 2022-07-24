@@ -94,11 +94,11 @@ function getProfile(membershipID, membershipType) {
 
 async function init() {
 	console.log("Starting")
-    let Manifest = workerData;
 
 	while (true) {
 		let currentdata = {
 			mode: '',
+			map: '',
 			weapons: [],
 			exoticarmor: '',
 			class: '',
@@ -135,13 +135,20 @@ async function init() {
 
 		for (characterHash in profile.response.Response.characterActivities.data) {
 			let characterDetail = profile.response.Response.characterActivities.data[characterHash]
-			if (!(characterDetail.currentActivityModeType in characterDetail) && characterDetail.currentActivityHash > 0 && characterDetail.currentActivityModeType in modes) {
+
+			if (!(characterDetail.currentActivityModeType in characterDetail) &&
+				characterDetail.currentActivityHash > 0 &&
+				characterDetail.currentActivityModeType in modes) {
+
+				currentdata.map = workerData.activityManifest[characterDetail.currentActivityHash].displayProperties.name;
+
 				//They are in an activity right now!, grab what it is and check what they have equipped
 				currentdata.mode = modes[characterDetail.currentActivityModeType];
 
 				let equippedStuff = profile.response.Response.characterEquipment.data[characterHash].items
+
 				for (item in equippedStuff) {
-					let itemDetails = Manifest[equippedStuff[item].itemHash]
+					let itemDetails = workerData.itemManifest[equippedStuff[item].itemHash]
 					let name = itemDetails.displayProperties.name;
 					let bucket = hashes[itemDetails.inventory.bucketTypeHash];
 
@@ -173,7 +180,9 @@ async function init() {
 					currentdata.membershipType = membershipType;
 					currentdata.character = characterHash;
 				}
+
                 parentPort.postMessage(currentdata);
+				continue;
 			}
 		}
     }

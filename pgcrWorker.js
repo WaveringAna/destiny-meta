@@ -1,7 +1,8 @@
+
 const fetch = require('sync-fetch')
 const Destiny2API = require('node-destiny-2');
 
-const { parentPort, workerData }  = require("worker_threads");
+const { Worker, parentPort, workerData }  = require("worker_threads");
 
 const config = require('./config.json');
 
@@ -59,13 +60,20 @@ function requestActivityHistory(membershipType, destinyMembershipId, characterId
 }
 
 async function init() {
+    //sometimes a PGCR isnt ever made, terminate after 15 minutes and let the data go
+    let t = setTimeout(function() {
+        Worker.terminate();
+    }, 900000);
+
     let matchStatus = false;
 
     let activityhistory = await requestActivityHistory(workerData.membershipType, workerData.membershipID, workerData.character, {count:[1], mode: [5]})
     let previousPGCR = activityhistory.response.Response.activities[0].activityDetails.instanceId;
+    console.log(previousPGCR)
 
     while (matchStatus == false) {
         let refresh = await requestActivityHistory(workerData.membershipType, workerData.membershipID, workerData.character, {count:[1], mode: [5]})
+        //console.log(refresh.response.Response.activities)
         let newmatch = refresh.response.Response.activities[0].activityDetails.instanceId;
 
         if (newmatch != previousPGCR) {
@@ -73,13 +81,33 @@ async function init() {
             let data = customFilter(pgcr, "characterId", workerData.character);
             let status = data.values.standing.basic.displayValue;
 
-            workerData.matchStatus = status;
+            //workerData.matchStatus = status;
+            //Count top 3 rumble and ties as wins
+
+            if (status == "Victory" ||
+                status == "1" ||
+                status == "2" ||
+                status == "3" ||
+                status == "Tie")
+                workerData.matchStatus = "Victory";
+            else if (status == "Defeat" ||
+                status == "4" ||
+                status == "5" ||
+                status == "6"
+            )
+                workerData.matchStatus = "Defeat";
+
             matchStatus = true;
 
+            //Anonymise data
             delete workerData["membershipID"];
             delete workerData["membershipType"];
             delete workerData["character"]
 
+            console.log("DONE ********")
+            console.log(previousPGCR)
+            console.log(newmatch)
+            console.log("********")
             parentPort.postMessage(workerData);
             break;
         }
