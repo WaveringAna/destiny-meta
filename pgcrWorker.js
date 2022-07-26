@@ -62,17 +62,17 @@ function requestActivityHistory(membershipType, destinyMembershipId, characterId
 async function init() {
     //sometimes a PGCR isnt ever made, terminate after 15 minutes and let the data go
     let t = setTimeout(function() {
-        Worker.terminate();
-    }, 900000);
+        Worker.close();
+    }, 1800000);
 
     let matchStatus = false;
 
-    let activityhistory = await requestActivityHistory(workerData.membershipType, workerData.membershipID, workerData.character, {count:[1], mode: [5]})
+    let activityhistory = await requestActivityHistory(workerData.membershipType, workerData.membershipId, workerData.character, {count:[1], mode: [5]})
     let previousPGCR = activityhistory.response.Response.activities[0].activityDetails.instanceId;
     console.log(previousPGCR)
 
     while (matchStatus == false) {
-        let refresh = await requestActivityHistory(workerData.membershipType, workerData.membershipID, workerData.character, {count:[1], mode: [5]})
+        let refresh = await requestActivityHistory(workerData.membershipType, workerData.membershipId, workerData.character, {count:[1], mode: [5]})
         //console.log(refresh.response.Response.activities)
         let newmatch = refresh.response.Response.activities[0].activityDetails.instanceId;
 
@@ -100,14 +100,10 @@ async function init() {
             matchStatus = true;
 
             //Anonymise data
-            delete workerData["membershipID"];
+            delete workerData["membershipId"];
             delete workerData["membershipType"];
             delete workerData["character"]
 
-            console.log("DONE ********")
-            console.log(previousPGCR)
-            console.log(newmatch)
-            console.log("********")
             parentPort.postMessage(workerData);
             break;
         }

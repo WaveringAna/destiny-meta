@@ -56,9 +56,9 @@ let classes = {
 	2271682572: 'Warlock'
 }
 
-function getBungieProfile(membershipID) {
+function getBungieProfile(membershipId) {
 	return new Promise((resolve, reject) => {
-		destiny.getBungieNetUserById(membershipID)
+		destiny.getBungieNetUserById(membershipId)
 		.then(res => {
 			resolve({ response: res, error: null });
 		})
@@ -80,9 +80,9 @@ function getID(name, code) {
 	});
 }
 
-function getProfile(membershipID, membershipType) {
+function getProfile(membershipId, membershipType) {
 	return new Promise((resolve, reject) => {
-		destiny.getProfile(membershipType, membershipID, [200, 201, 204, 205, 300, 302, 1000])
+		destiny.getProfile(membershipType, membershipId, [200, 201, 204, 205, 300, 302, 1000])
 		.then(res => {
 			resolve({ response: res, error: null });
 		})
@@ -92,24 +92,114 @@ function getProfile(membershipID, membershipType) {
 	});
 }
 
+function getMembershipDataById(membershipId, membershipType) {
+	return new Promise((resolve, reject) => {
+		destiny.getMembershipDataById(membershipId, membershipType)
+		.then(res => {
+			resolve({ response: res, error: null });
+		})
+		.catch(err => {
+			reject(err);
+		});
+	})
+}
+
+async function processData(membershipId, membershipType, profile, characterHash, processProfile) {
+	let characterDetail;
+
+	if (processProfile == true) {
+		let func = await getMembershipDataById(membershipId, -1)
+		membershipType = func.response.Response.destinyMemberships[0].membershipType
+
+		profile = await getProfile(membershipId, membershipType);
+
+		if (profile.response.ErrorCode != 1 || profile.response.Response.length == 0) {
+			return;
+		}
+
+		for (hash in profile.response.Response.characterActivities.data) {
+			let detail = profile.response.Response.characterActivities.data[hash]
+
+			if (!(detail.currentActivityModeType in detail) &&
+				detail.currentActivityHash > 0 &&
+				detail.currentActivityModeType in modes) {
+
+				characterDetail = profile.response.Response.characterActivities.data[hash];
+				characterHash = hash;
+			}
+		}
+	} else {
+		characterDetail = profile.response.Response.characterActivities.data[characterHash];
+	}
+
+
+	let currentdata = {
+		mode: '',
+		map: '',
+		weapons: [],
+		exoticarmor: '',
+		class: '',
+		subclass: '',
+		date: '',
+		stats: {},
+		date: '',
+		membershipId: '',
+		membershipType: '',
+		character: ''
+	}
+
+	try {
+		currentdata.map = workerData.activityManifest[characterDetail.currentActivityHash].displayProperties.name;
+		currentdata.mode = modes[characterDetail.currentActivityModeType];
+
+		let equippedStuff = profile.response.Response.characterEquipment.data[characterHash].items
+
+		for (item in equippedStuff) {
+			let itemDetails = workerData.itemManifest[equippedStuff[item].itemHash]
+			let name = itemDetails.displayProperties.name;
+			let bucket = hashes[itemDetails.inventory.bucketTypeHash];
+
+			let exoticstatus = itemDetails.inventory.tierType; //5 is legendary, 6 is exotic
+
+			if (bucket == "Weapon")
+				currentdata.weapons.push(name);
+
+			if (bucket == "Armor" && exoticstatus == 6)
+				currentdata.exoticarmor = name;
+
+			if (bucket == "Subclass")
+				currentdata.subclass = name;
+
+			currentdata.class = classes[profile.response.Response.characters.data[characterHash]["classHash"]];
+
+			currentdata.stats = {
+				mobility: profile.response.Response.characters.data[characterHash]["stats"]["2996146975"],
+				resilience: profile.response.Response.characters.data[characterHash]["stats"]["392767087"],
+				recovery: profile.response.Response.characters.data[characterHash]["stats"]["1943323491"],
+				discipline: profile.response.Response.characters.data[characterHash]["stats"]["1735777505"],
+				intellect: profile.response.Response.characters.data[characterHash]["stats"]["144602215"],
+				strength: profile.response.Response.characters.data[characterHash]["stats"]["4244567218"]
+			}
+
+			currentdata.date = Date.now();
+
+			currentdata.membershipId = membershipId;
+			currentdata.membershipType = membershipType;
+			currentdata.character = characterHash;
+		}
+
+		parentPort.postMessage(currentdata);
+	} catch {
+		console.log("error")
+		console.log(characterDetail)
+		console.log(currentdata)
+	}
+}
+
 async function init() {
 	console.log("Starting")
 
 	while (true) {
-		let currentdata = {
-			mode: '',
-			map: '',
-			weapons: [],
-			exoticarmor: '',
-			class: '',
-			subclass: '',
-			date: '',
-			stats: {},
-			date: '',
-			membershipID: '',
-			membershipType: '',
-			character: ''
-		}
 
 		let bungienetID = Math.floor(Math.random() * 21000000) + 1;
 		let bungieName = await getBungieProfile(bungienetID);
@@ -125,10 +215,10 @@ async function init() {
 		if (profileName.response.ErrorCode != 1 || profileName.response.Response.length == 0)
 			continue;
 
-		let membershipID = profileName.response.Response[0].membershipId;
+		let membershipId = profileName.response.Response[0].membershipId;
 		let membershipType = profileName.response.Response[0].membershipType;
 
-		let profile = await getProfile(membershipID, membershipType);
+		let profile = await getProfile(membershipId, membershipType);
 
 		if (profile.response.ErrorCode != 1 || profile.response.Response.length == 0)
 			continue;
@@ -140,49 +230,24 @@ async function init() {
 				characterDetail.currentActivityHash > 0 &&
 				characterDetail.currentActivityModeType in modes) {
 
-				currentdata.map = workerData.activityManifest[characterDetail.currentActivityHash].displayProperties.name;
-
-				//They are in an activity right now!, grab what it is and check what they have equipped
-				currentdata.mode = modes[characterDetail.currentActivityModeType];
-
-				let equippedStuff = profile.response.Response.characterEquipment.data[characterHash].items
-
-				for (item in equippedStuff) {
-					let itemDetails = workerData.itemManifest[equippedStuff[item].itemHash]
-					let name = itemDetails.displayProperties.name;
-					let bucket = hashes[itemDetails.inventory.bucketTypeHash];
-
-					let exoticstatus = itemDetails.inventory.tierType; //5 is legendary, 6 is exotic
-
-					if (bucket == "Weapon")
-						currentdata.weapons.push(name);
-
-					if (bucket == "Armor" && exoticstatus == 6)
-						currentdata.exoticarmor = name;
-
-					if (bucket == "Subclass")
-						currentdata.subclass = name;
-
-					currentdata.class = classes[profile.response.Response.characters.data[characterHash]["classHash"]];
-
-					currentdata.stats = {
-						mobility: profile.response.Response.characters.data[characterHash]["stats"]["2996146975"],
-						resilience: profile.response.Response.characters.data[characterHash]["stats"]["392767087"],
-						recovery: profile.response.Response.characters.data[characterHash]["stats"]["1943323491"],
-						discipline: profile.response.Response.characters.data[characterHash]["stats"]["1735777505"],
-						intellect: profile.response.Response.characters.data[characterHash]["stats"]["144602215"],
-						strength: profile.response.Response.characters.data[characterHash]["stats"]["4244567218"]
+				if (typeof profile.response.Response.profileTransitoryData != "undefined") {
+					try {
+						for (player in profile.response.Response.profileTransitoryData.data.partyMembers) {
+							if (profile.response.Response.profileTransitoryData.data.partyMembers[player].membershipId == membershipId) {
+								processData(membershipId, membershipType, profile, characterHash, false);
+							}
+							else {
+								processData(profile.response.Response.profileTransitoryData.data.partyMembers[player].membershipId, null, null, null, true);
+							}
+						}
+					} catch {
+						processData(membershipId, membershipType, profile, characterHash, false);
+						continue;
 					}
-
-					currentdata.date = Date.now();
-
-					currentdata.membershipID = membershipID;
-					currentdata.membershipType = membershipType;
-					currentdata.character = characterHash;
+				} else {
+					processData(membershipId, membershipType, profile, characterHash, false);
+					continue;
 				}
-
-                parentPort.postMessage(currentdata);
-				continue;
 			}
 		}
     }

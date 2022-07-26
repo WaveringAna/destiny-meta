@@ -60,6 +60,7 @@ function createWorker(Manifest, db, collection) {
 }
 
 async function init() {
+	console.log('lets go')
 	await client.connect();
 	console.log('Connected successfully to server');
 
@@ -70,7 +71,7 @@ async function init() {
 	const db = client.db(dbName);
 	const collection = db.collection('data');
 
-	for (let i = 0; i < 24; i++) {
+	for (let i = 0; i < 8; i++) {
 		createWorker(Manifest, db, collection);
 	}
 }
