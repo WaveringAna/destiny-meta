@@ -63,7 +63,7 @@ async function init() {
     //sometimes a PGCR isnt ever made, terminate after 15 minutes and let the data go
     let t = setTimeout(function() {
         Worker.close();
-    }, 1800000);
+    }, 3600000);
 
     let matchStatus = false;
 

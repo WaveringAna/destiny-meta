@@ -70,7 +70,7 @@ function getBungieProfile(membershipId) {
 
 function getID(name, code) {
 	return new Promise((resolve, reject) => {
-		destiny.getActualMembershipIDfromName(name, code)
+		destiny.SearchDestinyPlayerByBungieName(name, code)
 		.then(res => {
 			resolve({ response: res, error: null });
 		})
@@ -94,7 +94,7 @@ function getProfile(membershipId, membershipType) {
 
 function getMembershipDataById(membershipId, membershipType) {
 	return new Promise((resolve, reject) => {
-		destiny.getMembershipDataById(membershipId, membershipType)
+		destiny.getMembershipDataById(membershipType, membershipId)
 		.then(res => {
 			resolve({ response: res, error: null });
 		})
@@ -126,6 +126,8 @@ async function processData(membershipId, membershipType, profile, characterHash,
 
 				characterDetail = profile.response.Response.characterActivities.data[hash];
 				characterHash = hash;
+
+				break;
 			}
 		}
 	} else {
@@ -200,6 +202,7 @@ async function init() {
 	console.log("Starting")
 
 	while (true) {
+		let skip = false;
 
 		let bungienetID = Math.floor(Math.random() * 21000000) + 1;
 		let bungieName = await getBungieProfile(bungienetID);
@@ -242,11 +245,13 @@ async function init() {
 						}
 					} catch {
 						processData(membershipId, membershipType, profile, characterHash, false);
-						continue;
+						console.log("breaking")
+						break;
 					}
 				} else {
 					processData(membershipId, membershipType, profile, characterHash, false);
-					continue;
+					console.log("breaking")
+					break;
 				}
 			}
 		}

@@ -1,16 +1,24 @@
 {
   "name": "destinymeta",
   "version": "1.0.0",
-  "description": "",
+  "description": "analyzes destiny meta",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aayanl/destiny-meta.git"
+  },
   "author": "",
   "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/aayanl/destiny-meta/issues"
+  },
+  "homepage": "https://github.com/aayanl/destiny-meta#readme",
   "dependencies": {
     "mongodb": "^4.8.0",
-    "node-destiny-2": "^0.2.9",
+    "node-destiny-2": "github:aayanl/node-destiny-2",
     "sync-fetch": "^0.4.1"
   }
 }
