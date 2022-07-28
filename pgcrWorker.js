@@ -75,6 +75,7 @@ async function init() {
         let refresh = await requestActivityHistory(workerData.membershipType, workerData.membershipId, workerData.character, {count:[1], mode: [5]})
         //console.log(refresh.response.Response.activities)
         let newmatch = refresh.response.Response.activities[0].activityDetails.instanceId;
+        console.log('running')
 
         if (newmatch != previousPGCR) {
             let pgcr = await requestPGCR(newmatch);
@@ -107,7 +108,6 @@ async function init() {
             parentPort.postMessage(workerData);
             break;
         }
-
         await delay(90000)
     }
 }

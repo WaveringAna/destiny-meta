@@ -52,9 +52,13 @@ function createWorker(Manifest, db, collection) {
 		});
 
 		pgcrWorker.once("message", async completedData => {
-			console.log(completedData)
-			const insertResult = await collection.insertOne(completedData);
-			console.log('Inserted documents =>', insertResult);
+			try {
+				console.log(completedData)
+				const insertResult = await collection.insertOne(completedData);
+				console.log('Inserted documents =>', insertResult);
+			} catch (e) {
+				console.log(e)
+			}
 		});
 	});
 }
