@@ -1,12 +1,10 @@
 require('draftlog').into(console)
 const fetch = require('sync-fetch');
-const {Signale} = require('signale');
 const Destiny2API = require('node-destiny-2');
 const MongoClient = require('mongodb').MongoClient;
 
 const fs = require('fs');
 const config = require('./config.json');
-const {Worker} = require("worker_threads");
 
 const dbName = 'DestinyMeta';
 const client = new MongoClient(config.MongoDB);
@@ -18,6 +16,7 @@ let callsPS = 0;
 
 let processingPGCRs = 0;
 let processedPGCRs = 0;
+let rejectedPGCRs = 0;
 let Manifest;
 let db;
 let collection;
@@ -29,14 +28,21 @@ async function init() {
 	await client.connect();
 	initLog('Connected successfully to server');
 	initLog('Getting Manifest');
-	Manifest = await getManifest();
+	Manifest = await destiny.getManifest().then(res => {
+		let manifest = {}
+
+		manifest.itemManifest = fetch("https://www.bungie.net" + res.Response.jsonWorldComponentContentPaths.en.DestinyInventoryItemDefinition, {}).json();
+		manifest.activityManifest = fetch("https://www.bungie.net" + res.Response.jsonWorldComponentContentPaths.en.DestinyActivityDefinition,{}).json();
+
+        return manifest;
+    });
 	initLog('Got Manifest');
 	db = client.db(dbName);
 	collection = db.collection('data');
 	for (let i = 0; i < 7; i++) {
 		dataGatherer(i);
 	}
-	initLog(`Processing ${processingPGCRs} PGCRs Processed ${processedPGCRs} PGCRs`)
+	initLog(`Processing ${processingPGCRs} PGCRs Processed ${processedPGCRs} PGCRs Rejected ${rejectedPGCRs} PGCRs`)
 
 	setInterval(() =>  {
 		callLog(`Processed ${Math.floor((dataCalls)/ (Date.now()-startTime)*1000)} calls per second on average over ${ Math.floor((Date.now()-startTime)/1000) } seconds`)
@@ -54,46 +60,57 @@ async function dataGatherer(workerId) {
 		let skip = false;
 
 		let bungienetID = Math.floor(Math.random() * 21000000) + 1;
-		log(`Thread ${workerId} Looking up bungie profile ${bungienetID}`)
-		let bungieName = await getBungieProfile(bungienetID); dataCalls++;
-
-		if (bungieName.response.ErrorCode != 1)
-			continue;
-
-		if (typeof bungieName.response.Response.cachedBungieGlobalDisplayName == 'undefined')
-			continue;
-
-		log(`Thread ${workerId} Looking up destiny membershipId ${bungieName.response.Response.cachedBungieGlobalDisplayName}`)
-		let profileName = await getID(bungieName.response.Response.cachedBungieGlobalDisplayName, bungieName.response.Response.cachedBungieGlobalDisplayNameCode); dataCalls++;
-
-		if (profileName.response.ErrorCode != 1 || profileName.response.Response.length == 0)
-			continue;
-
-		let membershipId = profileName.response.Response[0].membershipId;
-		let membershipType = profileName.response.Response[0].membershipType;
-
-		log(`Thread ${workerId} Looking up destiny profile ${bungieName.response.Response.cachedBungieGlobalDisplayName}`)
-		let profile = await getProfile(membershipId, membershipType); dataCalls++;
-
-		if (profile.response.ErrorCode != 1 || profile.response.Response.length == 0) {
+		log(`Thread ${workerId} Looking up bungie profile ${bungienetID}`);
+		let bungieName;
+		try {
+			bungieName = await destiny.getBungieNetUserById(bungienetID); dataCalls++;
+			if (bungieName.ErrorCode != 1 || typeof bungieName.Response.cachedBungieGlobalDisplayName == 'undefined')
+				continue;
+		} catch (err) {
+			console.log(err)
 			continue;
 		}
 
-		for (characterHash in profile.response.Response.characterActivities.data) {
-			let characterDetail = profile.response.Response.characterActivities.data[characterHash]
+		log(`Thread ${workerId} Looking up destiny membershipId ${bungieName.Response.cachedBungieGlobalDisplayName}`)
+		let profileName
+		try {
+			profileName = await destiny.SearchDestinyPlayerByBungieName(bungieName.Response.cachedBungieGlobalDisplayName, bungieName.Response.cachedBungieGlobalDisplayNameCode); dataCalls++;
+			if (profileName.ErrorCode != 1 || profileName.Response.length == 0)
+				continue;
+		} catch (err) {
+				console.log(err)
+				continue;
+		}
+
+		let membershipId = profileName.Response[0].membershipId;
+		let membershipType = profileName.Response[0].membershipType;
+
+		log(`Thread ${workerId} Looking up destiny profile ${bungieName.Response.cachedBungieGlobalDisplayName}`)
+		let profile;
+		try {
+			profile = await destiny.getProfile(membershipType, membershipId, [200, 201, 204, 205, 300, 302, 1000]); dataCalls++;
+			if (profile.ErrorCode != 1 || profile.Response.length == 0)
+				continue;
+		} catch (err) {
+			console.log(err)
+			continue;
+		};
+
+		for (characterHash in profile.Response.characterActivities.data) {
+			let characterDetail = profile.Response.characterActivities.data[characterHash]
 
 			if (!(characterDetail.currentActivityModeType in characterDetail) &&
 				characterDetail.currentActivityHash > 0 &&
 				characterDetail.currentActivityModeType in modes) {
 
-				if (typeof profile.response.Response.profileTransitoryData != "undefined") {
+				if (typeof profile.Response.profileTransitoryData != "undefined") {
 					try {
-						for (player in profile.response.Response.profileTransitoryData.data.partyMembers) {
-							if (profile.response.Response.profileTransitoryData.data.partyMembers[player].membershipId == membershipId) {
+						for (player in profile.Response.profileTransitoryData.data.partyMembers) {
+							if (profile.Response.profileTransitoryData.data.partyMembers[player].membershipId == membershipId) {
 								processData(membershipId, membershipType, profile, characterHash, false);
 							}
 							else {
-								processData(profile.response.Response.profileTransitoryData.data.partyMembers[player].membershipId, null, null, null, true);
+								processData(profile.Response.profileTransitoryData.data.partyMembers[player].membershipId, null, null, null, true);
 							}
 						}
 					} catch {
@@ -113,30 +130,39 @@ async function processData(membershipId, membershipType, profile, characterHash,
 	let characterDetail;
 
 	if (processProfile == true) {
-		let func = await getMembershipDataById(membershipId, -1); dataCalls++;
-		membershipType = func.response.Response.destinyMemberships[0].membershipType
-
-		profile = await getProfile(membershipId, membershipType); dataCalls++;
-
-		if (profile.response.ErrorCode != 1 || profile.response.Response.length == 0) {
-			return;
+		let func;
+		try {
+			await destiny.getMembershipDataById(-1, membershipId); dataCalls++;
+		} catch (err) {
+			console.error(err)
 		}
 
-		for (hash in profile.response.Response.characterActivities.data) {
-			let detail = profile.response.Response.characterActivities.data[hash]
+		membershipType = func.Response.destinyMemberships[0].membershipType
+
+		try {
+			profile = await destiny.getProfile(membershipType, membershipId, [200, 201, 204, 205, 300, 302, 1000]); dataCalls++;
+			if (profile.ErrorCode != 1 || profile.Response.length == 0) {
+				return;
+			}
+		} catch (err) {
+			console.error(err)
+		}
+
+		for (hash in profile.Response.characterActivities.data) {
+			let detail = profile.Response.characterActivities.data[hash]
 
 			if (!(detail.currentActivityModeType in detail) &&
 				detail.currentActivityHash > 0 &&
 				detail.currentActivityModeType in modes) {
 
-				characterDetail = profile.response.Response.characterActivities.data[hash];
+				characterDetail = profile.Response.characterActivities.data[hash];
 				characterHash = hash;
 
 				break;
 			}
 		}
 	} else {
-		characterDetail = profile.response.Response.characterActivities.data[characterHash];
+		characterDetail = profile.Response.characterActivities.data[characterHash];
 	}
 
 
@@ -161,7 +187,7 @@ async function processData(membershipId, membershipType, profile, characterHash,
 		currentdata.map = Manifest.activityManifest[characterDetail.currentActivityHash].displayProperties.name;
 		currentdata.mode = modes[characterDetail.currentActivityModeType];
 
-		let equippedStuff = profile.response.Response.characterEquipment.data[characterHash].items
+		let equippedStuff = profile.Response.characterEquipment.data[characterHash].items
 
 		for (item in equippedStuff) {
 			let itemDetails = Manifest.itemManifest[equippedStuff[item].itemHash]
@@ -179,15 +205,15 @@ async function processData(membershipId, membershipType, profile, characterHash,
 			if (bucket == "Subclass")
 				currentdata.subclass = name;
 
-			currentdata.class = classes[profile.response.Response.characters.data[characterHash]["classHash"]];
+			currentdata.class = classes[profile.Response.characters.data[characterHash]["classHash"]];
 
 			currentdata.stats = {
-				mobility: profile.response.Response.characters.data[characterHash]["stats"]["2996146975"],
-				resilience: profile.response.Response.characters.data[characterHash]["stats"]["392767087"],
-				recovery: profile.response.Response.characters.data[characterHash]["stats"]["1943323491"],
-				discipline: profile.response.Response.characters.data[characterHash]["stats"]["1735777505"],
-				intellect: profile.response.Response.characters.data[characterHash]["stats"]["144602215"],
-				strength: profile.response.Response.characters.data[characterHash]["stats"]["4244567218"]
+				mobility: profile.Response.characters.data[characterHash]["stats"]["2996146975"],
+				resilience: profile.Response.characters.data[characterHash]["stats"]["392767087"],
+				recovery: profile.Response.characters.data[characterHash]["stats"]["1943323491"],
+				discipline: profile.Response.characters.data[characterHash]["stats"]["1735777505"],
+				intellect: profile.Response.characters.data[characterHash]["stats"]["144602215"],
+				strength: profile.Response.characters.data[characterHash]["stats"]["4244567218"]
 			}
 
 			currentdata.date = Date.now();
@@ -205,27 +231,64 @@ async function processData(membershipId, membershipType, profile, characterHash,
 
 async function pgcrWorker(currentdata) {
     //sometimes a PGCR isnt ever made, terminate after 15 minutes and let the data go
-    let t = setTimeout(function() {
-        processingPGCRs--;
+    /**let t = setTimeout(function() {
+        processingPGCRs--; rejectedPGCRs++;
 		return;
-    }, 3600000);
+    }, 3600000);**/
 
     let matchStatus = false;
 
-    let activityhistory = await requestActivityHistory(currentdata.membershipType, currentdata.membershipId, currentdata.character, {count:[1], mode: [5]}); dataCalls++;
-    let previousPGCR = activityhistory.response.Response.activities[0].activityDetails.instanceId;
+    let activityhistory;
+	try {
+		activityhistory = await destiny.getActivityHistory(currentdata.membershipType, currentdata.membershipId, currentdata.character, {count:[1], mode: [5]}); dataCalls++;
+		if (activityhistory.ErrorCode != 1 || activityhistory.Response.length == 0 && typeof activityhistory.Response.activities != "undefined") {
+			processingPGCRs--; rejectedPGCRs++;
+			return;
+		}
+	} catch (err) {
+		console.log(err)
+		return;
+	}
 
-	initLog(`Processing ${processingPGCRs++} PGCRs Processed ${processedPGCRs} PGCRs`)
+    let previousPGCR = activityhistory.Response.activities[0].activityDetails.instanceId;
+
+	initLog(`Processing ${processingPGCRs++} PGCRs Processed ${processedPGCRs} PGCRs Rejected ${rejectedPGCRs} PGCRs`)
 
     while (matchStatus == false) {
-        let refresh = await requestActivityHistory(currentdata.membershipType, currentdata.membershipId, currentdata.character, {count:[1], mode: [5]}); dataCalls++;
+		let refresh;
+		try {
+			refresh = await destiny.getActivityHistory(currentdata.membershipType, currentdata.membershipId, currentdata.character, {count:[1], mode: [5]}); dataCalls++;
+			if (refresh.ErrorCode != 1 || refresh.Response.length == 0 && typeof refresh.Response.activities != "undefined") {
+				processingPGCRs--; rejectedPGCRs++;
+				return;
+			}
+		} catch (err) {
+			console.log(err)
+			return;
+		}
         //console.log(refresh.response.Response.activities)
-        let newmatch = refresh.response.Response.activities[0].activityDetails.instanceId;
+        let newmatch = refresh.Response.activities[0].activityDetails.instanceId;
 
         if (newmatch != previousPGCR) {
-            let pgcr = await requestPGCR(newmatch); dataCalls++;
+			let pgcr;
+			try {
+				pgcr = await destiny.getPostGameCarnageReport(newmatch); dataCalls++;
+			} catch (err) {
+				console.error(err)
+				return;
+			}
+
             let data = customFilter(pgcr, "characterId", currentdata.character);
-            let status = data.values.standing.basic.displayValue;
+			let status;
+
+			try {
+				status = data.values.standing.basic.displayValue;
+			} catch (e) {
+				console.log(e)
+				console.log(data)
+				processingPGCRs--; rejectedPGCRs++;
+				return;
+			}
 
             //currentdata.matchStatus = status;
             //Count top 3 rumble and ties as wins
@@ -243,8 +306,6 @@ async function pgcrWorker(currentdata) {
             )
                 currentdata.matchStatus = "Defeat";
 
-            matchStatus = true;
-
             //Anonymise data
             delete currentdata["membershipId"];
             delete currentdata["membershipType"];
@@ -252,103 +313,15 @@ async function pgcrWorker(currentdata) {
 
             try {
 				const insertResult = await collection.insertOne(currentdata);
-				initLog(`Processing ${processingPGCRs} PGCRs Processed ${processedPGCRs++} PGCRs`)
+				initLog(`Processing ${processingPGCRs--} PGCRs Processed ${processedPGCRs++} PGCRs Rejected ${rejectedPGCRs} PGCRs`)
 			} catch (e) {
 				console.log(e)
 			}
-            break;
+			matchStatus = true;
+            return;
         }
         await delay(90000)
     }
-}
-
-function getManifest() {
-	return new Promise((resolve, reject) => {
-		destiny.getManifest()
-		.then(res => {
-			let manifest = {}
-
-			manifest.itemManifest = fetch("https://www.bungie.net" + res.Response.jsonWorldComponentContentPaths.en.DestinyInventoryItemDefinition, {}).json();
-			manifest.activityManifest = fetch("https://www.bungie.net" + res.Response.jsonWorldComponentContentPaths.en.DestinyActivityDefinition,{}).json();
-
-			resolve(manifest);
-		})
-		.catch(err => {
-			console.error(`Error: ${err}`)
-		});
-	});
-}
-
-function getBungieProfile(membershipId) {
-	return new Promise((resolve, reject) => {
-		destiny.getBungieNetUserById(membershipId)
-		.then(res => {
-			resolve({ response: res, error: null });
-		})
-		.catch(err => {
-			reject(err);
-		});
-	})
-}
-
-function getID(name, code) {
-	return new Promise((resolve, reject) => {
-		destiny.SearchDestinyPlayerByBungieName(name, code)
-		.then(res => {
-			resolve({ response: res, error: null });
-		})
-		.catch(err => {
-			reject(err);
-		});
-	});
-}
-
-function getProfile(membershipId, membershipType) {
-	return new Promise((resolve, reject) => {
-		destiny.getProfile(membershipType, membershipId, [200, 201, 204, 205, 300, 302, 1000])
-		.then(res => {
-			resolve({ response: res, error: null });
-		})
-		.catch(err => {
-			reject(err);
-		});
-	});
-}
-
-function getMembershipDataById(membershipId, membershipType) {
-	return new Promise((resolve, reject) => {
-		destiny.getMembershipDataById(membershipType, membershipId)
-		.then(res => {
-			resolve({ response: res, error: null });
-		})
-		.catch(err => {
-			reject(err);
-		});
-	})
-}
-
-function requestPGCR(pgcrID) {
-	return new Promise((resolve, reject) => {
-		destiny.getPostGameCarnageReport(pgcrID)
-		.then(res => {
-			resolve({ response: res, error: null });
-		})
-		.catch(err => {
-			reject(err);
-		});
-	});
-}
-
-function requestActivityHistory(membershipType, destinyMembershipId, characterId) {
-    return new Promise((resolve, reject) => {
-        destiny.getActivityHistory(membershipType, destinyMembershipId, characterId)
-        .then(res => {
-            resolve({ response: res, error: null });
-        })
-        .catch(err => {
-            reject(err);
-        });
-    })
 }
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
