@@ -5,6 +5,7 @@ const MongoClient = require('mongodb').MongoClient;
 
 const fs = require('fs');
 const config = require('./config.json');
+const {Worker} = require("worker_threads");
 
 const dbName = 'DestinyMeta';
 const client = new MongoClient(config.MongoDB);
@@ -17,13 +18,20 @@ let callsPS = 0;
 let processingPGCRs = 0;
 let processedPGCRs = 0;
 let rejectedPGCRs = 0;
+let previousPGCR;
+let pgcrID = 11223391821;
+let failCounter = 0;
 let Manifest;
 let db;
 let collection;
-let initLog = console.draft('lets go');
-let callLog = console.draft(`Processed 0 calls per second`)
 
 async function init() {
+	try {
+		previousPGCR, pgcrID = parseInt(fs.readFileSync('./previousPGCR.txt'))
+	} catch {
+		fs.writeFileSync('./previousPGCR.txt', "11223391822");
+	}
+	let initLog = console.draft('lets go');
 	initLog('Connecting to server');
 	await client.connect();
 	initLog('Connected successfully to server');
@@ -39,22 +47,48 @@ async function init() {
 	initLog('Got Manifest');
 	db = client.db(dbName);
 	collection = db.collection('data');
-	for (let i = 0; i < 7; i++) {
-		dataGatherer(i);
-	}
-	initLog(`Processing ${processingPGCRs} PGCRs Processed ${processedPGCRs} PGCRs Rejected ${rejectedPGCRs} PGCRs`)
 
 	setInterval(() =>  {
-		callLog(`Processed ${Math.floor((dataCalls)/ (Date.now()-startTime)*1000)} calls per second on average over ${ Math.floor((Date.now()-startTime)/1000) } seconds`)
-	} , 1000)
+		initLog(`Processed ${Math.floor((dataCalls)/ (Date.now()-startTime)*1000)} calls per second on average over ${ Math.floor((Date.now()-startTime)/1000) } seconds Processing ${processingPGCRs} PGCRs Processed ${processedPGCRs} PGCRs Rejected ${rejectedPGCRs}`)
+	} , 50)
+
+	for (let i = 0; i < 3; i++) {
+        const worker = new Worker("./pgcrScan.js", { workerData: pgcrID });
+		pgcrID++
+
+		worker.on("message", async data => {
+			dataCalls++;
+			if (data.length != 0) {
+				try {
+					const insertManyresult = await collection.insertMany(data)
+				} catch(e) {
+					processedPGCRs++
+				}
+			}
+			processedPGCRs++
+			worker.postMessage(++pgcrID)
+		});
+
+		worker.on('exit', exitCode => {
+			console.log(`It exited with code ${exitCode}`);
+		})
+    }
+
+    for (let i = 0; i < 7; i++) {
+		dataGatherer(i);
+	}
+
+    process.on('SIGINT', ()=> {
+		fs.writeFileSync('./previousPGCR.txt', pgcrID.toString());
+		client.close();
+		process.exit();
+	});
 
 	//setInterval(() => { dataCalls = 0; startTime = Date.now(); }, 5000);
 } init();
 
 async function dataGatherer(workerId) {
-	//const log = new Signale({interactive: true, scope: `dataGatherer ${workerId}`});
-	let log = console.draft(`Thread ${workerId} starting`)
-	log("Starting Data Gatherer Thread", workerId)
+	let log = console.draft(`Starting Data Gatherer Thread ${workerId}`)
 
 	while (true) {
 		let skip = false;
@@ -67,7 +101,7 @@ async function dataGatherer(workerId) {
 			if (bungieName.ErrorCode != 1 || typeof bungieName.Response.cachedBungieGlobalDisplayName == 'undefined')
 				continue;
 		} catch (err) {
-			console.log(err)
+			//console.log(err)
 			continue;
 		}
 
@@ -78,7 +112,7 @@ async function dataGatherer(workerId) {
 			if (profileName.ErrorCode != 1 || profileName.Response.length == 0)
 				continue;
 		} catch (err) {
-				console.log(err)
+				//console.log(err)
 				continue;
 		}
 
@@ -92,7 +126,7 @@ async function dataGatherer(workerId) {
 			if (profile.ErrorCode != 1 || profile.Response.length == 0)
 				continue;
 		} catch (err) {
-			console.log(err)
+			//console.log(err)
 			continue;
 		};
 
@@ -132,9 +166,10 @@ async function processData(membershipId, membershipType, profile, characterHash,
 	if (processProfile == true) {
 		let func;
 		try {
-			await destiny.getMembershipDataById(-1, membershipId); dataCalls++;
+			func = await destiny.getMembershipDataById(-1, membershipId); dataCalls++;
 		} catch (err) {
-			console.error(err)
+			//console.error(err)
+			return;
 		}
 
 		membershipType = func.Response.destinyMemberships[0].membershipType
@@ -145,7 +180,8 @@ async function processData(membershipId, membershipType, profile, characterHash,
 				return;
 			}
 		} catch (err) {
-			console.error(err)
+			//console.error(err)
+			return;
 		}
 
 		for (hash in profile.Response.characterActivities.data) {
@@ -175,7 +211,6 @@ async function processData(membershipId, membershipType, profile, characterHash,
 		subclass: '',
 		date: '',
 		stats: {},
-		date: '',
 		membershipId: '',
 		membershipType: '',
 		character: ''
@@ -225,7 +260,7 @@ async function processData(membershipId, membershipType, profile, characterHash,
 
 		pgcrWorker(currentdata);
 	} catch (e){
-		console.log(e)
+		return;
 	}
 }
 
@@ -252,7 +287,7 @@ async function pgcrWorker(currentdata) {
 
     let previousPGCR = activityhistory.Response.activities[0].activityDetails.instanceId;
 
-	initLog(`Processing ${processingPGCRs++} PGCRs Processed ${processedPGCRs} PGCRs Rejected ${rejectedPGCRs} PGCRs`)
+	processingPGCRs++
 
     while (matchStatus == false) {
 		let refresh;
@@ -313,7 +348,7 @@ async function pgcrWorker(currentdata) {
 
             try {
 				const insertResult = await collection.insertOne(currentdata);
-				initLog(`Processing ${processingPGCRs--} PGCRs Processed ${processedPGCRs++} PGCRs Rejected ${rejectedPGCRs} PGCRs`)
+				processingPGCRs--; processedPGCRs++;
 			} catch (e) {
 				console.log(e)
 			}
