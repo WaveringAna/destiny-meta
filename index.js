@@ -52,7 +52,7 @@ async function init() {
 		initLog(`Processed ${Math.floor((dataCalls)/ (Date.now()-startTime)*1000)} calls per second on average over ${ Math.floor((Date.now()-startTime)/1000) } seconds Processing ${processingPGCRs} PGCRs Processed ${processedPGCRs} PGCRs Rejected ${rejectedPGCRs}`)
 	} , 50)
 
-	for (let i = 0; i < 3; i++) {
+	for (let i = 0; i < 1; i++) {
         const worker = new Worker("./pgcrScan.js", { workerData: pgcrID });
 		pgcrID++
 
@@ -62,6 +62,7 @@ async function init() {
 				try {
 					const insertManyresult = await collection.insertMany(data)
 				} catch(e) {
+					console.log(e)
 					processedPGCRs++
 				}
 			}
@@ -74,11 +75,17 @@ async function init() {
 		})
     }
 
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 1; i++) {
 		dataGatherer(i);
 	}
 
     process.on('SIGINT', ()=> {
+		fs.writeFileSync('./previousPGCR.txt', pgcrID.toString());
+		client.close();
+		process.exit();
+	});
+
+	process.on('SIGTERM', ()=> {
 		fs.writeFileSync('./previousPGCR.txt', pgcrID.toString());
 		client.close();
 		process.exit();
@@ -405,7 +412,14 @@ let modes = {
     88: 'Rift',
     80: 'Elimination',
     48: 'Rumble',
-    37: 'Survival'
+    37: 'Survival',
+	73: 'control'
+}
+
+let pvemodes = {
+    46: 'Nightfall',
+    4:  'Raid',
+    82: 'Dungeon'
 }
 
 let classes = {
